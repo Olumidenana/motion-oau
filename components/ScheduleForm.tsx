@@ -70,7 +70,7 @@ export default function ScheduleForm() {
       <SignInForm
         redirectPath={`/runs/new?route=${routeSlug}`}
         title="Sign in to schedule a run"
-        intro="So people know who’s hosting. No password — just your email."
+        intro="So people know who’s hosting. It only takes a moment."
       />
     );
   }

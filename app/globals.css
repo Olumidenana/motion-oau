@@ -1165,3 +1165,39 @@ textarea.input {
     background-position: 0 0;
   }
 }
+
+/* ---------- Sign-in extras ---------- */
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.password-row {
+  display: flex;
+  gap: 8px;
+}
+.password-row .input {
+  flex: 1;
+}
+.link-button {
+  background: none;
+  border: 0;
+  padding: 6px 0;
+  min-height: 40px;
+  color: var(--link);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}

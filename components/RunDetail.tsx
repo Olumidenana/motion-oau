@@ -229,7 +229,7 @@ export default function RunDetail({ id }: { id: string }) {
               <SignInForm
                 redirectPath={`/runs/${run.id}`}
                 title="Sign in to join"
-                intro="So the host knows who’s coming. No password — just your email. You can keep your name private."
+                intro="So the host knows who’s coming. You can keep your name private."
               />
             ) : (
               <>

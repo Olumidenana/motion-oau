@@ -167,6 +167,7 @@ export function createDemoStore(): Store {
 
   return {
     mode: 'demo',
+    authMethods: ['instant'] as const,
 
     async getViewer() {
       return load().viewer;
