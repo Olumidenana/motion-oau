@@ -82,7 +82,7 @@ Pricing at the time of writing: dynamic map loads include **10,000 free loads pe
 
 ### 3. Deploy on Vercel
 
-Import the repo in Vercel (framework: Next.js, no extra settings), add the environment variables, and deploy.
+Import the repo in Vercel, add the environment variables, and deploy. `vercel.json` pins the framework (Next.js), install and build commands, and `package.json` pins Node 22, so the project settings don't matter. If a deployment fails, open it in Vercel and check **Build Logs**.
 
 ## Recording real routes
 
