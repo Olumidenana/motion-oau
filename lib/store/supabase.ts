@@ -48,6 +48,7 @@ export function createSupabaseStore(): Store {
 
   return {
     mode: 'supabase',
+    authMethods: ['magic-link'] as const,
 
     getViewer: viewer,
 

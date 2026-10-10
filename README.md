@@ -9,12 +9,13 @@ Motion is a campus activity app for Obafemi Awolowo University (OAU), Ile-Ife. I
 - join or leave other people's runs, see who's going (private profiles appear as "A runner"), and share a run on WhatsApp
 - see what's coming next (reading spaces, ball games, trips and more) and tap "Notify me" to join a waitlist
 
-It's built for cheap Android phones and slow data. The pages are small, the map code only downloads when the map scrolls into view, the Supabase client only downloads when Supabase is configured, and map tiles load at standard resolution.
+It's built for cheap Android phones and slow data. The pages are small, the map code only downloads when the map scrolls into view, the database client only downloads when a backend is configured, and map tiles load at standard resolution.
 
 ## Stack
 
 - Next.js 15 (App Router) + TypeScript, plain CSS, Archivo from Google Fonts
-- Supabase (free tier): email magic-link auth + Postgres
+- Firebase (free Spark plan): Google sign-in + email/password, Firestore database
+- Supabase is still supported as an alternative backend (magic-link auth + Postgres)
 - Maps: Google Maps JS API when a key is set; otherwise Leaflet with free CARTO Voyager tiles. Both use the same `MapView` component and props.
 
 ## Run it locally
@@ -30,22 +31,62 @@ Copy `.env.example` to `.env.local` and fill in whatever you have. Every variabl
 
 | Variable | What it does |
 | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL. Without it (or the key), the app runs in demo mode. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (public) key. |
+| `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID` | Firebase web app config. With these set, Motion uses Firebase. |
+| `NEXT_PUBLIC_FIREBASE_EMULATOR_HOST` | Local development only: use the Firebase emulators (e.g. `127.0.0.1`). |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Alternative backend, used only when Firebase isn't configured. With neither, the app runs in demo mode. |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Switches maps to Google. Without it, Leaflet + CARTO is used. |
 | `NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID` | Optional Google map ID (vector map, advanced markers). |
 
 These are build-time variables. After you change them on Vercel, redeploy.
 
+To try the Firebase setup locally without a real project, run the emulators (`npx firebase-tools emulators:start --only auth,firestore --project demo-motion`, needs Java) and start the app with `NEXT_PUBLIC_FIREBASE_EMULATOR_HOST=127.0.0.1`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-motion` and any placeholder API key and app ID. The emulators load the rules from `firebase/firestore.rules`.
+
 ## Demo mode
 
-If the Supabase variables are missing, Motion still works fully. Data is stored in the browser's localStorage, a set of sample runs is seeded (and refreshed once they're in the past), and a "Demo mode — data stays on this device" banner shows at the top. Signing in only asks for an email and signs you in on that device straight away. No email is sent.
+If no backend is configured, Motion still works fully. Data is stored in the browser's localStorage, a set of sample runs is seeded (and refreshed once they're in the past), and a "Demo mode — data stays on this device" banner shows at the top. Signing in only asks for an email and signs you in on that device straight away. No email is sent.
 
-All data access goes through one `Store` interface (`lib/store/types.ts`) with two implementations: `lib/store/demo.ts` and `lib/store/supabase.ts`.
+All data access goes through one `Store` interface (`lib/store/types.ts`) with three implementations: `lib/store/demo.ts`, `lib/store/firebase.ts` and `lib/store/supabase.ts`.
 
 ## Going live
 
-### 1. Set up Supabase
+### 1. Set up Firebase (free)
+
+Firebase's free **Spark** plan needs no card and easily covers a campus app: 50,000 database reads and 20,000 writes a day, 1 GB of storage, and free Google and email/password sign-in. (Only sign-in by email link is limited, to 5 emails a day, so Motion doesn't use it.)
+
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) and click **Create a project** (call it `motion-oau`). You can turn Google Analytics off.
+2. **Add a web app:** on the project overview, click the **</>** (Web) icon, give it a nickname, and skip Firebase Hosting (Vercel hosts the app). Firebase shows a `firebaseConfig` block. Keep that page open.
+3. **Turn on sign-in:** **Build → Authentication → Get started → Sign-in method**:
+   - enable **Google** (pick a support email and save)
+   - enable **Email/Password** (leave "Email link" off: the free plan only allows 5 link emails a day)
+4. **Allow your domain:** **Authentication → Settings → Authorized domains → Add domain**, and add your Vercel domain (e.g. `motion-oau.vercel.app`). `localhost` is there already. For preview deployments, add each preview domain you want to sign in on.
+5. **Create the database:** **Build → Firestore Database → Create database**. Choose **Start in production mode** and a location close to Nigeria, such as `europe-west1` (Belgium). The location can't be changed later.
+6. **Add the security rules:** in Firestore, open the **Rules** tab, replace everything with the contents of [`firebase/firestore.rules`](firebase/firestore.rules), and click **Publish**. Do this again whenever that file changes.
+7. **Add the config to Vercel:** **Vercel → your project → Settings → Environment Variables**, copy these values from the `firebaseConfig` block, then **redeploy**:
+
+   | Vercel variable | `firebaseConfig` field |
+   | --- | --- |
+   | `NEXT_PUBLIC_FIREBASE_API_KEY` | `apiKey` |
+   | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `authDomain` |
+   | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | `projectId` |
+   | `NEXT_PUBLIC_FIREBASE_APP_ID` | `appId` |
+
+   These values are safe to be public. The security rules are what protect the data.
+
+How the data is stored and protected:
+
+- `profiles/{uid}`: your display name and private setting. Only you can read or change it. It's created the first time you sign in, using your Google first name if you have one.
+- `runs/{id}`: anyone can read runs. Only the host can create or cancel theirs. Runs can be scheduled up to 60 days ahead.
+- `participants/{runId}_{uid}`: the "who's going" list. Anyone can read it, but the name is blank for private profiles, so they show as "A runner". You can only add or remove yourself, and the host can't leave their own run.
+- `going_count` on a run can only change by one at a time, together with someone joining or leaving. The rules refuse a join when the run is full, cancelled or already over.
+- `waitlist`: "Notify me" sign-ups. The app can add to it but nobody can read it through the app. Read it in **Firestore → Data → waitlist**.
+
+Because Firestore has no views, names are copied onto runs and participant rows. When someone changes their name or goes private, the app updates those copies. A private runner's user ID is still part of their participant row, but their name never is.
+
+Students who open a link inside Instagram or another app's built-in browser can't use Google sign-in there (Google blocks it). The app tells them to open the page in Chrome or use email and password.
+
+### Alternative: Supabase
+
+Supabase works too, if you'd rather use it (for example, after pausing an old project to free a slot on the 2-project free limit). Set only the Supabase variables, not the Firebase ones.
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. Open **SQL editor → New query**, paste in all of [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. You can safely run it again later.
@@ -104,8 +145,9 @@ For loops, finish where you started. For a spot (like the Amphitheatre steps), t
 app/                    pages (home, routes/[slug], runs/new, runs/[id], me, explore, tools/route-recorder)
 components/MapView.tsx  lazy map wrapper → components/map/GoogleMap.tsx | LeafletMap.tsx
 lib/routes.ts           campus routes (paths, levels, terrain, best times)
-lib/store/              Store interface + demo and Supabase implementations
-supabase/schema.sql     tables, triggers, RLS policies, views
+lib/store/              Store interface + demo, Firebase and Supabase implementations
+firebase/firestore.rules  Firestore security rules (paste into the Firebase console)
+supabase/schema.sql     tables, triggers, RLS policies, views (Supabase alternative)
 ```
 
 ## Roadmap: coming soon

@@ -59,13 +59,25 @@ export interface ListRunsOptions {
  * - demo: localStorage, seeded sample runs (no Supabase env vars)
  * - supabase: Postgres + magic-link auth
  */
+/**
+ * How people can sign in with a given store.
+ * - instant: demo mode, signs in on this device with just an email
+ * - magic-link: Supabase emails a sign-in link
+ * - google / password: Firebase (its free plan only allows 5 link emails a day)
+ */
+export type AuthMethod = 'instant' | 'magic-link' | 'google' | 'password';
+
 export interface Store {
-  readonly mode: 'demo' | 'supabase';
+  readonly mode: 'demo' | 'supabase' | 'firebase';
+  readonly authMethods: readonly AuthMethod[];
 
   getViewer(): Promise<Viewer | null>;
   onViewerChange(cb: (viewer: Viewer | null) => void): () => void;
-  /** Supabase: sends a magic link. Demo: signs in immediately. */
-  signIn(email: string, redirectTo: string): Promise<{ sentLink: boolean }>;
+  /** instant / magic-link: demo signs in immediately, Supabase sends a link. */
+  signIn?(email: string, redirectTo: string): Promise<{ sentLink: boolean }>;
+  signInWithGoogle?(): Promise<void>;
+  signInWithPassword?(email: string, password: string, intent: 'sign-in' | 'sign-up'): Promise<void>;
+  sendPasswordReset?(email: string): Promise<void>;
   signOut(): Promise<void>;
 
   getProfile(): Promise<Profile | null>;

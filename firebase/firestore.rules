@@ -1,0 +1,166 @@
+rules_version = '2';
+
+// Motion — Firestore security rules.
+// Paste this file into Firebase console → Firestore Database → Rules → Publish.
+//
+// Collections
+//   profiles/{uid}                 private: only the owner can read/write
+//   runs/{runId}                   public read; host creates/cancels; going_count kept in step with participants
+//   participants/{runId}_{uid}     public read (it's the "who's going" list); display_name is null for private profiles
+//   waitlist/{id}                  create only ("Notify me"); read it in the console
+//
+// Keep the 30-minute grace period in sync with RUN_GRACE_MS in lib/store/types.ts.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function me() {
+      return request.auth.uid;
+    }
+    function validName(n) {
+      return n == null || (n is string && n.size() >= 1 && n.size() <= 40);
+    }
+    function validNote(n) {
+      return n == null || (n is string && n.size() <= 200);
+    }
+    function runPath(runId) {
+      return /databases/$(database)/documents/runs/$(runId);
+    }
+    function partPath(runId, uid) {
+      return /databases/$(database)/documents/participants/$(runId + '_' + uid);
+    }
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ---------------------------------------------------------------- profiles
+    match /profiles/{userId} {
+      allow read: if signedIn() && me() == userId;
+      allow create, update: if signedIn() && me() == userId
+        && request.resource.data.keys().hasOnly(['display_name', 'is_private'])
+        && request.resource.data.display_name is string
+        && request.resource.data.display_name.trim().size() >= 1
+        && request.resource.data.display_name.size() <= 40
+        && request.resource.data.is_private is bool;
+    }
+
+    // -------------------------------------------------------------------- runs
+    match /runs/{runId} {
+      allow read: if true;
+
+      // The host creates the run and their own participant row in one batch.
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['route_slug', 'host_id', 'host_name', 'starts_at', 'pace',
+             'max_people', 'meeting_note', 'women_only', 'status', 'going_count', 'created_at'])
+        && request.resource.data.keys().hasAll(['route_slug', 'host_id', 'host_name', 'starts_at', 'pace',
+             'max_people', 'meeting_note', 'women_only', 'status', 'going_count', 'created_at'])
+        && request.resource.data.host_id == me()
+        && validName(request.resource.data.host_name)
+        && request.resource.data.route_slug is string
+        && request.resource.data.route_slug.matches('[a-z0-9-]{1,60}')
+        && request.resource.data.pace in ['walk', 'easy', 'steady', 'fast']
+        && request.resource.data.max_people is int
+        && request.resource.data.max_people >= 2
+        && request.resource.data.max_people <= 50
+        && validNote(request.resource.data.meeting_note)
+        && request.resource.data.women_only is bool
+        && request.resource.data.status == 'scheduled'
+        && request.resource.data.going_count == 1
+        && request.resource.data.starts_at is timestamp
+        && request.resource.data.starts_at > request.time
+        && request.resource.data.starts_at < request.time + duration.value(60, 'd')
+        && request.resource.data.created_at == request.time
+        && existsAfter(partPath(runId, me()));
+
+      // Host: cancel the run, edit the note, or update their shown name.
+      function hostEdit() {
+        return resource.data.host_id == me()
+          && changed().hasOnly(['status', 'meeting_note', 'host_name'])
+          && (request.resource.data.status == resource.data.status
+              || (resource.data.status == 'scheduled' && request.resource.data.status == 'cancelled'))
+          && validName(request.resource.data.host_name)
+          && validNote(request.resource.data.meeting_note);
+      }
+      // Anyone: +1 only together with creating their own participant row.
+      function countUp() {
+        return changed().hasOnly(['going_count'])
+          && request.resource.data.going_count == resource.data.going_count + 1
+          && request.resource.data.going_count <= resource.data.max_people
+          && !exists(partPath(runId, me()))
+          && existsAfter(partPath(runId, me()));
+      }
+      // Anyone: -1 only together with deleting their own participant row.
+      function countDown() {
+        return changed().hasOnly(['going_count'])
+          && request.resource.data.going_count == resource.data.going_count - 1
+          && exists(partPath(runId, me()))
+          && !existsAfter(partPath(runId, me()));
+      }
+      allow update: if signedIn() && (hostEdit() || countUp() || countDown());
+    }
+
+    // ------------------------------------------------------------ participants
+    match /participants/{pid} {
+      allow read: if true;
+
+      function newRow() {
+        return request.resource.data;
+      }
+      function hostAddsSelf(runId) {
+        return !exists(runPath(runId))
+          && getAfter(runPath(runId)).data.host_id == me()
+          && newRow().is_host == true;
+      }
+      // Joining: the run must be open, not full, not over, and the count goes up by exactly one.
+      function joins(runId) {
+        return exists(runPath(runId))
+          && get(runPath(runId)).data.status == 'scheduled'
+          && get(runPath(runId)).data.starts_at > request.time - duration.value(30, 'm')
+          && get(runPath(runId)).data.going_count < get(runPath(runId)).data.max_people
+          && get(runPath(runId)).data.host_id != me()
+          && newRow().is_host == false
+          && getAfter(runPath(runId)).data.going_count == get(runPath(runId)).data.going_count + 1;
+      }
+
+      allow create: if signedIn()
+        && newRow().keys().hasOnly(['run_id', 'user_id', 'display_name', 'is_host', 'joined_at', 'starts_at'])
+        && newRow().keys().hasAll(['run_id', 'user_id', 'display_name', 'is_host', 'joined_at', 'starts_at'])
+        && newRow().user_id == me()
+        && newRow().run_id is string
+        && pid == newRow().run_id + '_' + me()
+        && validName(newRow().display_name)
+        && newRow().joined_at == request.time
+        && newRow().starts_at == getAfter(runPath(newRow().run_id)).data.starts_at
+        && (hostAddsSelf(newRow().run_id) || joins(newRow().run_id));
+
+      // Owner can change the name shown on their rows (e.g. after going private).
+      allow update: if signedIn()
+        && resource.data.user_id == me()
+        && changed().hasOnly(['display_name'])
+        && validName(request.resource.data.display_name);
+
+      // Leaving: not the host, and the count goes down by exactly one.
+      allow delete: if signedIn()
+        && resource.data.user_id == me()
+        && resource.data.is_host == false
+        && getAfter(runPath(resource.data.run_id)).data.going_count
+             == get(runPath(resource.data.run_id)).data.going_count - 1;
+    }
+
+    // ---------------------------------------------------------------- waitlist
+    match /waitlist/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['feature', 'user_id', 'contact', 'created_at'])
+        && request.resource.data.keys().hasAll(['feature', 'user_id', 'contact', 'created_at'])
+        && request.resource.data.feature is string
+        && request.resource.data.feature.matches('[a-z0-9-]{2,40}')
+        && (request.resource.data.user_id == null
+            || (signedIn() && request.resource.data.user_id == me()))
+        && (request.resource.data.contact == null
+            || (request.resource.data.contact is string && request.resource.data.contact.size() <= 120))
+        && request.resource.data.created_at == request.time;
+    }
+  }
+}

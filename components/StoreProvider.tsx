@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { IS_DEMO } from '@/lib/config';
+import { BACKEND } from '@/lib/config';
 import { createDemoStore } from '@/lib/store/demo';
 import type { Store, Viewer } from '@/lib/store/types';
 
@@ -17,10 +17,13 @@ const Ctx = createContext<MotionContext>({ store: null, viewer: null, ready: fal
 let storePromise: Promise<Store> | null = null;
 
 function getStore(): Promise<Store> {
-  // Supabase's client is only downloaded when Supabase is configured.
-  storePromise ??= IS_DEMO
-    ? Promise.resolve(createDemoStore())
-    : import('@/lib/store/supabase').then((m) => m.createSupabaseStore());
+  // Backend SDKs are only downloaded when that backend is configured.
+  storePromise ??=
+    BACKEND === 'firebase'
+      ? import('@/lib/store/firebase').then((m) => m.createFirebaseStore())
+      : BACKEND === 'supabase'
+        ? import('@/lib/store/supabase').then((m) => m.createSupabaseStore())
+        : Promise.resolve(createDemoStore());
   return storePromise;
 }
 

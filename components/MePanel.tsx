@@ -34,7 +34,7 @@ export default function MePanel() {
     return (
       <SignInForm
         redirectPath="/me"
-        intro="Sign in to schedule runs, join other people’s runs and keep track of where you’re going. No password needed."
+        intro="Sign in to schedule runs, join other people’s runs and keep track of where you’re going."
       />
     );
   }
